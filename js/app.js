@@ -1,266 +1,1770 @@
+
 "use strict";
 
+
+
+/*
+
+    ============================================================
+
+    ValueLens prototype
+
+    app.js
+
+
+
+    Responsibilities:
+
+
+
+    - Load an image selected by the user
+
+    - Draw it on the HTML canvas
+
+    - Convert tap/click coordinates to image coordinates
+
+    - Average pixels around the selected point
+
+    - Convert the averaged RGB color to CIELAB
+
+    - Estimate a painter's value
+
+    - Compare the result with an optional target value
+
+    - Draw a crosshair over the selected point
+
+    ============================================================
+
+*/
+
+
+
+
+
 document.addEventListener("DOMContentLoaded", () => {
-    const $ = id => document.getElementById(id);
-    const canvas = $("imageCanvas");
-    const context = canvas.getContext("2d", { willReadFrequently: true });
-    if (!window.ValueLensColor || !window.ValueLensValueMap ||
-        !window.ValueLensViewport || !context) {
-        document.body.textContent = "ValueLens could not start. Confirm that all project files are present.";
+
+
+
+    /*
+
+        --------------------------------------------------------
+
+        Confirm that color.js loaded correctly
+
+        --------------------------------------------------------
+
+    */
+
+
+
+    if (!window.ValueLensColor) {
+
+        showFatalError(
+
+            "ValueLens could not start because color.js was not loaded."
+
+        );
+
         return;
+
     }
 
-    const release = window.ValueLensVersion || { version: "1.2.0", buildDate: "2026-07-21" };
-    $("appVersion").textContent = `v${release.version}`;
-    $("footerVersion").textContent = `v${release.version}`;
-    $("buildDate").textContent = `Built ${release.buildDate}`;
+
+
+
+
+    /*
+
+        --------------------------------------------------------
+
+        Get references to page elements
+
+        --------------------------------------------------------
+
+    */
+
+
+
+    const imageFileInput = document.getElementById("imageFile");
+
+    const fileNameText = document.getElementById("fileName");
+
+
+
+    const sampleSizeSelect = document.getElementById("sampleSize");
+
+
+
+    const imagePlaceholder = document.getElementById("imagePlaceholder");
+
+    const canvasContainer = document.getElementById("canvasContainer");
+
+    const imageCanvas = document.getElementById("imageCanvas");
+
+
+
+    const emptyResult = document.getElementById("emptyResult");
+
+    const measurementResult = document.getElementById("measurementResult");
+
+
+
+    const painterValueText = document.getElementById("painterValue");
+
+
+
+    const labLText = document.getElementById("labL");
+
+    const labAText = document.getElementById("labA");
+
+    const labBText = document.getElementById("labB");
+
+
+
+    const rgbRText = document.getElementById("rgbR");
+
+    const rgbGText = document.getElementById("rgbG");
+
+    const rgbBText = document.getElementById("rgbB");
+
+
+
+    const hexValueText = document.getElementById("hexValue");
+
+    const sampleDimensionsText = document.getElementById("sampleDimensions");
+
+
+
+    const colorPreview = document.getElementById("colorPreview");
+
+    const sampleCoordinatesText = document.getElementById(
+
+        "sampleCoordinates"
+
+    );
+
+
+
+    const targetValueInput = document.getElementById("targetValue");
+
+    const targetToleranceSelect = document.getElementById(
+
+        "targetTolerance"
+
+    );
+
+    const clearTargetButton = document.getElementById(
+
+        "clearTargetButton"
+
+    );
+
+
+
+    const targetComparison = document.getElementById(
+
+        "targetComparison"
+
+    );
+
+    const targetMessage = document.getElementById("targetMessage");
+
+
+
+
+
+    /*
+
+        --------------------------------------------------------
+
+        Canvas setup
+
+        --------------------------------------------------------
+
+    */
+
+
+
+    const canvasContext = imageCanvas.getContext(
+
+        "2d",
+
+        {
+
+            willReadFrequently: true
+
+        }
+
+    );
+
+
+
+    if (!canvasContext) {
+
+        showFatalError(
+
+            "Your browser does not support the canvas features required by ValueLens."
+
+        );
+
+        return;
+
+    }
+
+
+
+
+
+    /*
+
+        --------------------------------------------------------
+
+        Application state
+
+        --------------------------------------------------------
+
+    */
+
+
+
+    let loadedImage = null;
+
+
+
+    /*
+
+        The canvas contains the original image dimensions.
+
+
+
+        CSS may display the canvas much smaller than its true pixel
+
+        dimensions. Pointer coordinates therefore have to be scaled
+
+        back to the canvas coordinate system.
+
+    */
+
+
 
     let selectedPoint = null;
-    let measurement = null;
-    let originalData = null;
-    let mapData = null;
-    let retainedValues = [];
-    let showingMap = false;
-    let sourceName = "value-map";
 
-    const viewport = ValueLensViewport({
-        container: $("canvasContainer"),
-        stage: $("canvasStage"),
-        canvas,
-        onTap: point => {
-            if (point.x >= 0 && point.y >= 0 && point.x < canvas.width && point.y < canvas.height) {
-                selectedPoint = point;
-                measure();
-            }
-        },
-        onChange: scale => { $("zoomLevel").textContent = `${Math.round(scale * 100)}%`; }
-    });
 
-    $("zoomIn").onclick = viewport.zoomIn;
-    $("zoomOut").onclick = viewport.zoomOut;
-    $("fitImage").onclick = viewport.fit;
-    $("actualSize").onclick = viewport.actual;
-    $("sampleSize").onchange = () => selectedPoint && measure();
-    $("targetValue").oninput = compare;
-    $("targetTolerance").onchange = compare;
-    $("clearTargetButton").onclick = () => { $("targetValue").value = ""; compare(); };
-    $("generateMap").onclick = generateMap;
-    $("showOriginal").onclick = toggleOriginal;
-    $("saveMap").onclick = saveMap;
-    document.querySelectorAll("[data-values]").forEach(button => {
-        button.onclick = () => { $("mapValues").value = button.dataset.values; };
-    });
 
-    $("imageFile").addEventListener("change", event => {
-        const file = event.target.files?.[0];
-        if (!file) return;
-        if (!file.type.startsWith("image/")) {
-            $("fileName").textContent = "Please choose an image file.";
+    /*
+
+        Keep the most recent measurement so the target value can be
+
+        changed without requiring the user to tap the image again.
+
+    */
+
+
+
+    let currentMeasurement = null;
+
+
+
+
+
+    /*
+
+        --------------------------------------------------------
+
+        Event listeners
+
+        --------------------------------------------------------
+
+    */
+
+
+
+    imageFileInput.addEventListener(
+
+        "change",
+
+        handleImageFileSelection
+
+    );
+
+
+
+    /*
+
+        Pointer events work for mouse, touch, and stylus input.
+
+    */
+
+
+
+    imageCanvas.addEventListener(
+
+        "pointerdown",
+
+        handleCanvasPointer
+
+    );
+
+
+
+    sampleSizeSelect.addEventListener(
+
+        "change",
+
+        handleSampleSizeChange
+
+    );
+
+
+
+    targetValueInput.addEventListener(
+
+        "input",
+
+        updateTargetComparison
+
+    );
+
+
+
+    targetToleranceSelect.addEventListener(
+
+        "change",
+
+        updateTargetComparison
+
+    );
+
+
+
+    clearTargetButton.addEventListener(
+
+        "click",
+
+        clearTargetValue
+
+    );
+
+
+
+
+
+    /*
+
+        --------------------------------------------------------
+
+        Image loading
+
+        --------------------------------------------------------
+
+    */
+
+
+
+
+
+    /**
+
+     * Handle a file selected through the image input.
+
+     *
+
+     * @param {Event} event
+
+     */
+
+    function handleImageFileSelection(event) {
+
+        const selectedFiles = event.target.files;
+
+
+
+        if (!selectedFiles || selectedFiles.length === 0) {
+
             return;
+
         }
-        const url = URL.createObjectURL(file);
+
+
+
+        const file = selectedFiles[0];
+
+
+
+        if (!file.type.startsWith("image/")) {
+
+            fileNameText.textContent =
+
+                "The selected file is not recognized as an image.";
+
+
+
+            imageFileInput.value = "";
+
+            return;
+
+        }
+
+
+
+        fileNameText.textContent = `Loading ${file.name}…`;
+
+
+
+        const objectUrl = URL.createObjectURL(file);
+
         const image = new Image();
-        $("fileName").textContent = `Loading ${file.name}…`;
+
+
+
         image.onload = () => {
-            URL.revokeObjectURL(url);
-            canvas.width = image.naturalWidth;
-            canvas.height = image.naturalHeight;
-            context.drawImage(image, 0, 0);
-            originalData = context.getImageData(0, 0, canvas.width, canvas.height);
-            mapData = null;
-            retainedValues = [];
-            showingMap = false;
-            selectedPoint = measurement = null;
-            sourceName = file.name.replace(/\.[^.]+$/, "") || "value-map";
-            $("fileName").textContent = `${file.name} — ${canvas.width} × ${canvas.height}`;
-            $("imagePlaceholder").hidden = true;
-            $("canvasContainer").hidden = false;
-            $("viewportToolbar").hidden = false;
-            $("emptyResult").hidden = false;
-            $("measurementResult").hidden = true;
-            $("showOriginal").disabled = true;
-            $("saveMap").disabled = true;
-            $("valueLegend").hidden = true;
-            setMapStatus("Choose the Painter's Values you want to retain.");
-            updateMode();
-            requestAnimationFrame(viewport.fit);
+
+            URL.revokeObjectURL(objectUrl);
+
+
+
+            loadedImage = image;
+
+            selectedPoint = null;
+
+            currentMeasurement = null;
+
+
+
+            prepareCanvasForImage(image);
+
+
+
+            fileNameText.textContent =
+
+                `${file.name} — ${image.naturalWidth} × ${image.naturalHeight} pixels`;
+
+
+
+            imagePlaceholder.hidden = true;
+
+            canvasContainer.hidden = false;
+
+
+
+            clearDisplayedMeasurement();
+
         };
+
+
+
         image.onerror = () => {
-            URL.revokeObjectURL(url);
-            $("fileName").textContent = "ValueLens could not open that image.";
+
+            URL.revokeObjectURL(objectUrl);
+
+
+
+            loadedImage = null;
+
+            fileNameText.textContent =
+
+                "ValueLens could not open that image.";
+
+
+
+            imageFileInput.value = "";
+
         };
-        image.src = url;
-    });
 
-    function activeData() { return showingMap && mapData ? mapData : originalData; }
-    function drawBase() {
-        const data = activeData();
-        if (data) context.putImageData(data, 0, 0);
-    }
-    function redraw() {
-        drawBase();
-        if (selectedPoint) drawCrosshair(selectedPoint.x, selectedPoint.y);
+
+
+        image.src = objectUrl;
+
     }
 
-    function generateMap() {
-        if (!originalData) { setMapStatus("Open a photograph first.", true); return; }
-        let values;
-        try { values = ValueLensValueMap.parseValues($("mapValues").value); }
-        catch (error) { setMapStatus(error.message, true); return; }
 
-        $("generateMap").disabled = true;
-        setMapStatus("Generating value map…");
-        requestAnimationFrame(() => {
-            try {
-                mapData = ValueLensValueMap.generate(originalData, values);
-                retainedValues = values;
-                showingMap = true;
-                selectedPoint = measurement = null;
-                $("emptyResult").hidden = false;
-                $("measurementResult").hidden = true;
-                $("showOriginal").disabled = false;
-                $("showOriginal").textContent = "Show Original";
-                $("saveMap").disabled = false;
-                renderLegend();
-                redraw();
-                updateMode();
-                setMapStatus(`Map generated using Painter's Values ${values.join(", ")}.`);
-            } catch (error) {
-                setMapStatus(`The value map could not be generated: ${error.message}`, true);
-            } finally {
-                $("generateMap").disabled = false;
-            }
-        });
+
+
+
+    /**
+
+     * Resize the canvas to the image's original dimensions and
+
+     * draw the image.
+
+     *
+
+     * @param {HTMLImageElement} image
+
+     */
+
+    function prepareCanvasForImage(image) {
+
+        imageCanvas.width = image.naturalWidth;
+
+        imageCanvas.height = image.naturalHeight;
+
+
+
+        redrawCanvas();
+
     }
 
-    function toggleOriginal() {
-        if (!mapData) return;
-        showingMap = !showingMap;
-        $("showOriginal").textContent = showingMap ? "Show Original" : "Show Value Map";
-        selectedPoint = measurement = null;
-        $("emptyResult").hidden = false;
-        $("measurementResult").hidden = true;
-        redraw();
-        updateMode();
-    }
 
-    function saveMap() {
-        if (!mapData) return;
-        const exportCanvas = document.createElement("canvas");
-        exportCanvas.width = mapData.width;
-        exportCanvas.height = mapData.height;
-        exportCanvas.getContext("2d").putImageData(mapData, 0, 0);
-        exportCanvas.toBlob(blob => {
-            if (!blob) { setMapStatus("The browser could not create the PNG.", true); return; }
-            const link = document.createElement("a");
-            const values = retainedValues.join("-").replace(/\./g, "_");
-            link.download = `${sourceName}-values-${values}.png`;
-            link.href = URL.createObjectURL(blob);
-            link.click();
-            setTimeout(() => URL.revokeObjectURL(link.href), 1000);
-            setMapStatus(`Saved ${link.download}.`);
-        }, "image/png");
-    }
 
-    function renderLegend() {
-        const legend = $("valueLegend");
-        legend.textContent = "";
-        ValueLensValueMap.makeLegend(retainedValues).forEach(item => {
-            const entry = document.createElement("div");
-            entry.className = "legend-item";
-            const swatch = document.createElement("span");
-            swatch.className = "legend-swatch";
-            swatch.style.background = `rgb(${item.gray},${item.gray},${item.gray})`;
-            const label = document.createElement("span");
-            label.textContent = `Value ${item.value}`;
-            entry.append(swatch, label);
-            legend.append(entry);
-        });
-        legend.hidden = false;
-    }
 
-    function setMapStatus(message, error = false) {
-        $("mapStatus").textContent = message;
-        $("mapStatus").className = `map-status${error ? " error" : ""}`;
-    }
-    function updateMode() { $("modeIndicator").textContent = showingMap ? "Painter's Value Map" : "Original"; }
 
-    function averagePixels(centerX, centerY, requestedSize) {
-        const half = Math.floor(requestedSize / 2);
-        const left = Math.max(0, centerX - half);
-        const top = Math.max(0, centerY - half);
-        const right = Math.min(canvas.width - 1, centerX + half);
-        const bottom = Math.min(canvas.height - 1, centerY + half);
-        const width = right - left + 1;
-        const height = bottom - top + 1;
-        const pixels = context.getImageData(left, top, width, height).data;
-        let red = 0, green = 0, blue = 0, alpha = 0;
-        for (let index = 0; index < pixels.length; index += 4) {
-            const weight = pixels[index + 3] / 255;
-            red += pixels[index] * weight;
-            green += pixels[index + 1] * weight;
-            blue += pixels[index + 2] * weight;
-            alpha += weight;
+    /*
+
+        --------------------------------------------------------
+
+        Pointer handling
+
+        --------------------------------------------------------
+
+    */
+
+
+
+
+
+    /**
+
+     * Handle a mouse click or touch on the canvas.
+
+     *
+
+     * @param {PointerEvent} event
+
+     */
+
+    function handleCanvasPointer(event) {
+
+        if (!loadedImage) {
+
+            return;
+
         }
-        return { red: alpha ? Math.round(red / alpha) : 0, green: alpha ? Math.round(green / alpha) : 0, blue: alpha ? Math.round(blue / alpha) : 0, width, height };
+
+
+
+        event.preventDefault();
+
+
+
+        const point = pointerEventToCanvasPoint(event);
+
+
+
+        selectedPoint = point;
+
+
+
+        measureSelectedPoint();
+
     }
 
-    function measure() {
-        drawBase();
-        const color = averagePixels(selectedPoint.x, selectedPoint.y, Number($("sampleSize").value));
-        const lab = ValueLensColor.rgbToLab(color.red, color.green, color.blue);
-        measurement = { ...color, lab, value: ValueLensColor.labLightnessToRoundedPainterValue(lab.l) };
-        displayMeasurement();
-        redraw();
+
+
+
+
+    /**
+
+     * Convert coordinates from the canvas's displayed CSS size
+
+     * into the canvas's true image-pixel coordinates.
+
+     *
+
+     * @param {PointerEvent} event
+
+     * @returns {{x: number, y: number}}
+
+     */
+
+    function pointerEventToCanvasPoint(event) {
+
+        const canvasBounds = imageCanvas.getBoundingClientRect();
+
+
+
+        const horizontalScale =
+
+            imageCanvas.width / canvasBounds.width;
+
+
+
+        const verticalScale =
+
+            imageCanvas.height / canvasBounds.height;
+
+
+
+        const x = Math.floor(
+
+            (event.clientX - canvasBounds.left) *
+
+            horizontalScale
+
+        );
+
+
+
+        const y = Math.floor(
+
+            (event.clientY - canvasBounds.top) *
+
+            verticalScale
+
+        );
+
+
+
+        return {
+
+            x: ValueLensColor.clamp(
+
+                x,
+
+                0,
+
+                imageCanvas.width - 1
+
+            ),
+
+            y: ValueLensColor.clamp(
+
+                y,
+
+                0,
+
+                imageCanvas.height - 1
+
+            )
+
+        };
+
     }
-    function displayMeasurement() {
-        const item = measurement;
-        $("emptyResult").hidden = true;
-        $("measurementResult").hidden = false;
-        $("painterValue").textContent = item.value.toFixed(1);
-        $("labL").textContent = item.lab.l.toFixed(1);
-        $("labA").textContent = signed(item.lab.a);
-        $("labB").textContent = signed(item.lab.b);
-        $("rgbR").textContent = item.red;
-        $("rgbG").textContent = item.green;
-        $("rgbB").textContent = item.blue;
-        $("hexValue").textContent = ValueLensColor.rgbToHex(item.red, item.green, item.blue);
-        $("sampleDimensions").textContent = `${item.width} × ${item.height}`;
-        $("sampleCoordinates").textContent = `x ${selectedPoint.x}, y ${selectedPoint.y}`;
-        $("colorPreview").style.background = ValueLensColor.rgbToCss(item.red, item.green, item.blue);
-        compare();
+
+
+
+
+
+    /*
+
+        --------------------------------------------------------
+
+        Sampling and measurement
+
+        --------------------------------------------------------
+
+    */
+
+
+
+
+
+    /**
+
+     * Recalculate the measurement if the user changes the
+
+     * averaging size.
+
+     */
+
+    function handleSampleSizeChange() {
+
+        if (selectedPoint) {
+
+            measureSelectedPoint();
+
+        }
+
     }
-    function signed(number) {
-        const value = ValueLensColor.roundTo(number, 1);
-        return `${value > 0 ? "+" : ""}${value.toFixed(1)}`;
+
+
+
+
+
+    /**
+
+     * Read the pixels around the selected point, average them,
+
+     * perform the color conversion, and update the interface.
+
+     */
+
+    function measureSelectedPoint() {
+
+        if (!loadedImage || !selectedPoint) {
+
+            return;
+
+        }
+
+
+
+        /*
+
+            Redraw the plain image before reading pixels.
+
+
+
+            This is important because the crosshair is drawn directly
+
+            on the same canvas. Without redrawing first, a later sample
+
+            near the crosshair could accidentally include crosshair
+
+            pixels in its average.
+
+        */
+
+
+
+        redrawCanvas();
+
+
+
+        const requestedSampleSize = Number(
+
+            sampleSizeSelect.value
+
+        );
+
+
+
+        const sampledColor = averagePixelsAroundPoint(
+
+            selectedPoint.x,
+
+            selectedPoint.y,
+
+            requestedSampleSize
+
+        );
+
+
+
+        const lab = ValueLensColor.rgbToLab(
+
+            sampledColor.red,
+
+            sampledColor.green,
+
+            sampledColor.blue
+
+        );
+
+
+
+        const painterValue =
+
+            ValueLensColor.labLightnessToRoundedPainterValue(
+
+                lab.l
+
+            );
+
+
+
+        currentMeasurement = {
+
+            point: {
+
+                x: selectedPoint.x,
+
+                y: selectedPoint.y
+
+            },
+
+            red: sampledColor.red,
+
+            green: sampledColor.green,
+
+            blue: sampledColor.blue,
+
+            lab,
+
+            painterValue,
+
+            sampleWidth: sampledColor.sampleWidth,
+
+            sampleHeight: sampledColor.sampleHeight
+
+        };
+
+
+
+        displayMeasurement(currentMeasurement);
+
+
+
+        drawCrosshair(
+
+            selectedPoint.x,
+
+            selectedPoint.y
+
+        );
+
     }
-    function compare() {
-        const box = $("targetComparison");
-        const raw = $("targetValue").value;
-        const target = Number(raw);
-        const tolerance = Number($("targetTolerance").value);
-        if (!measurement || raw.trim() === "" || target < 1 || target > 10) { box.hidden = true; return; }
-        const difference = measurement.value - target;
-        const absolute = Math.abs(difference);
-        box.hidden = false;
-        box.className = `target-comparison ${absolute <= tolerance ? "good" : difference > 0 ? "too-light" : "too-dark"}`;
-        $("targetMessage").textContent = absolute <= tolerance
-            ? `On target: measured ${measurement.value.toFixed(1)}, planned ${target.toFixed(1)}.`
-            : `Too ${difference > 0 ? "light" : "dark"} by ${absolute.toFixed(1)} value ${Math.abs(absolute - 1) < .05 ? "step" : "steps"}.`;
+
+
+
+
+
+    /**
+
+     * Average an area centered around the selected pixel.
+
+     *
+
+     * Near an image edge, the sample rectangle is clipped so it
+
+     * stays inside the image. Therefore, a requested 9 × 9 sample
+
+     * may become smaller when the point is close to an edge.
+
+     *
+
+     * @param {number} centerX
+
+     * @param {number} centerY
+
+     * @param {number} requestedSize
+
+     * @returns {{
+
+     *   red: number,
+
+     *   green: number,
+
+     *   blue: number,
+
+     *   sampleWidth: number,
+
+     *   sampleHeight: number
+
+     * }}
+
+     */
+
+    function averagePixelsAroundPoint(
+
+        centerX,
+
+        centerY,
+
+        requestedSize
+
+    ) {
+
+        /*
+
+            All available sample sizes are odd, so the point stays
+
+            in the center of the rectangle.
+
+        */
+
+
+
+        const halfSize = Math.floor(requestedSize / 2);
+
+
+
+        const left = Math.max(
+
+            0,
+
+            centerX - halfSize
+
+        );
+
+
+
+        const top = Math.max(
+
+            0,
+
+            centerY - halfSize
+
+        );
+
+
+
+        const right = Math.min(
+
+            imageCanvas.width - 1,
+
+            centerX + halfSize
+
+        );
+
+
+
+        const bottom = Math.min(
+
+            imageCanvas.height - 1,
+
+            centerY + halfSize
+
+        );
+
+
+
+        const sampleWidth = right - left + 1;
+
+        const sampleHeight = bottom - top + 1;
+
+
+
+        const imageData = canvasContext.getImageData(
+
+            left,
+
+            top,
+
+            sampleWidth,
+
+            sampleHeight
+
+        );
+
+
+
+        const pixels = imageData.data;
+
+
+
+        let totalRed = 0;
+
+        let totalGreen = 0;
+
+        let totalBlue = 0;
+
+        let totalAlphaWeight = 0;
+
+
+
+        /*
+
+            Canvas image data is stored as repeating groups:
+
+
+
+                red, green, blue, alpha
+
+
+
+            Transparent pixels are weighted by alpha rather than
+
+            treated as opaque black.
+
+        */
+
+
+
+        for (let index = 0; index < pixels.length; index += 4) {
+
+            const alphaWeight = pixels[index + 3] / 255;
+
+
+
+            totalRed += pixels[index] * alphaWeight;
+
+            totalGreen += pixels[index + 1] * alphaWeight;
+
+            totalBlue += pixels[index + 2] * alphaWeight;
+
+            totalAlphaWeight += alphaWeight;
+
+        }
+
+
+
+        /*
+
+            Fully transparent images are unusual, but avoid division
+
+            by zero in case the sampled area contains no visible pixels.
+
+        */
+
+
+
+        if (totalAlphaWeight === 0) {
+
+            return {
+
+                red: 0,
+
+                green: 0,
+
+                blue: 0,
+
+                sampleWidth,
+
+                sampleHeight
+
+            };
+
+        }
+
+
+
+        return {
+
+            red: Math.round(totalRed / totalAlphaWeight),
+
+            green: Math.round(totalGreen / totalAlphaWeight),
+
+            blue: Math.round(totalBlue / totalAlphaWeight),
+
+            sampleWidth,
+
+            sampleHeight
+
+        };
+
     }
+
+
+
+
+
+    /*
+
+        --------------------------------------------------------
+
+        Displaying measurements
+
+        --------------------------------------------------------
+
+    */
+
+
+
+
+
+    /**
+
+     * Update all measurement fields on the page.
+
+     *
+
+     * @param {Object} measurement
+
+     */
+
+    function displayMeasurement(measurement) {
+
+        emptyResult.hidden = true;
+
+        measurementResult.hidden = false;
+
+
+
+        painterValueText.textContent =
+
+            measurement.painterValue.toFixed(1);
+
+
+
+        labLText.textContent =
+
+            ValueLensColor.roundTo(
+
+                measurement.lab.l,
+
+                1
+
+            ).toFixed(1);
+
+
+
+        labAText.textContent =
+
+            formatSignedNumber(measurement.lab.a);
+
+
+
+        labBText.textContent =
+
+            formatSignedNumber(measurement.lab.b);
+
+
+
+        rgbRText.textContent = measurement.red;
+
+        rgbGText.textContent = measurement.green;
+
+        rgbBText.textContent = measurement.blue;
+
+
+
+        hexValueText.textContent =
+
+            ValueLensColor.rgbToHex(
+
+                measurement.red,
+
+                measurement.green,
+
+                measurement.blue
+
+            );
+
+
+
+        sampleDimensionsText.textContent =
+
+            `${measurement.sampleWidth} × ${measurement.sampleHeight}`;
+
+
+
+        sampleCoordinatesText.textContent =
+
+            `x ${measurement.point.x}, y ${measurement.point.y}`;
+
+
+
+        colorPreview.style.background =
+
+            ValueLensColor.rgbToCss(
+
+                measurement.red,
+
+                measurement.green,
+
+                measurement.blue
+
+            );
+
+
+
+        updateTargetComparison();
+
+    }
+
+
+
+
+
+    /**
+
+     * Format positive CIELAB a* and b* values with a plus sign.
+
+     *
+
+     * @param {number} value
+
+     * @returns {string}
+
+     */
+
+    function formatSignedNumber(value) {
+
+        const roundedValue = ValueLensColor.roundTo(value, 1);
+
+        const fixedValue = roundedValue.toFixed(1);
+
+
+
+        if (roundedValue > 0) {
+
+            return `+${fixedValue}`;
+
+        }
+
+
+
+        return fixedValue;
+
+    }
+
+
+
+
+
+    /**
+
+     * Reset the measurement panel when a new image is loaded.
+
+     */
+
+    function clearDisplayedMeasurement() {
+
+        emptyResult.hidden = false;
+
+        measurementResult.hidden = true;
+
+
+
+        targetComparison.hidden = true;
+
+        targetComparison.className = "target-comparison";
+
+
+
+        colorPreview.style.background = "";
+
+    }
+
+
+
+
+
+    /*
+
+        --------------------------------------------------------
+
+        Target comparison
+
+        --------------------------------------------------------
+
+    */
+
+
+
+
+
+    /**
+
+     * Remove the planned target value.
+
+     */
+
+    function clearTargetValue() {
+
+        targetValueInput.value = "";
+
+        updateTargetComparison();
+
+    }
+
+
+
+
+
+    /**
+
+     * Compare the measured value with the optional planned value.
+
+     */
+
+    function updateTargetComparison() {
+
+        if (!currentMeasurement) {
+
+            targetComparison.hidden = true;
+
+            return;
+
+        }
+
+
+
+        const targetValue = Number(targetValueInput.value);
+
+        const tolerance = Number(targetToleranceSelect.value);
+
+
+
+        if (
+
+            targetValueInput.value.trim() === "" ||
+
+            !Number.isFinite(targetValue) ||
+
+            targetValue < 1 ||
+
+            targetValue > 10
+
+        ) {
+
+            targetComparison.hidden = true;
+
+            targetComparison.className = "target-comparison";
+
+            return;
+
+        }
+
+
+
+        const measuredValue = currentMeasurement.painterValue;
+
+        const difference = measuredValue - targetValue;
+
+        const absoluteDifference = Math.abs(difference);
+
+
+
+        targetComparison.hidden = false;
+
+        targetComparison.className = "target-comparison";
+
+
+
+        if (absoluteDifference <= tolerance) {
+
+            targetComparison.classList.add("good");
+
+
+
+            targetMessage.textContent =
+
+                `On target: measured ${measuredValue.toFixed(1)}, ` +
+
+                `planned ${targetValue.toFixed(1)}.`;
+
+
+
+            return;
+
+        }
+
+
+
+        if (difference > 0) {
+
+            targetComparison.classList.add("too-light");
+
+
+
+            targetMessage.textContent =
+
+                `Too light by ${absoluteDifference.toFixed(1)} value ` +
+
+                `${pluralizeValueUnit(absoluteDifference)}.`;
+
+
+
+            return;
+
+        }
+
+
+
+        targetComparison.classList.add("too-dark");
+
+
+
+        targetMessage.textContent =
+
+            `Too dark by ${absoluteDifference.toFixed(1)} value ` +
+
+            `${pluralizeValueUnit(absoluteDifference)}.`;
+
+    }
+
+
+
+
+
+    /**
+
+     * Return "step" or "steps" for target-comparison messages.
+
+     *
+
+     * @param {number} amount
+
+     * @returns {string}
+
+     */
+
+    function pluralizeValueUnit(amount) {
+
+        return Math.abs(amount - 1) < 0.05
+
+            ? "step"
+
+            : "steps";
+
+    }
+
+
+
+
+
+    /*
+
+        --------------------------------------------------------
+
+        Canvas drawing
+
+        --------------------------------------------------------
+
+    */
+
+
+
+
+
+    /**
+
+     * Clear the canvas and redraw the unmarked image.
+
+     */
+
+    function redrawCanvas() {
+
+        if (!loadedImage) {
+
+            return;
+
+        }
+
+
+
+        canvasContext.clearRect(
+
+            0,
+
+            0,
+
+            imageCanvas.width,
+
+            imageCanvas.height
+
+        );
+
+
+
+        canvasContext.drawImage(
+
+            loadedImage,
+
+            0,
+
+            0,
+
+            imageCanvas.width,
+
+            imageCanvas.height
+
+        );
+
+    }
+
+
+
+
+
+    /**
+
+     * Draw a visible crosshair over the sampled point.
+
+
+
+     * The crosshair size scales with image resolution so it remains
+
+     * visible on both small and high-resolution photographs.
+
+     *
+
+     * @param {number} x
+
+     * @param {number} y
+
+     */
+
     function drawCrosshair(x, y) {
-        const radius = ValueLensColor.clamp(Math.min(canvas.width, canvas.height) * .018, 8, 30);
-        const width = ValueLensColor.clamp(Math.min(canvas.width, canvas.height) * .002, 2, 5);
-        context.save();
-        [["rgba(0,0,0,.9)", width + 2], ["rgba(255,255,255,.95)", width]].forEach(([stroke, lineWidth]) => {
-            context.strokeStyle = stroke; context.lineWidth = lineWidth; context.beginPath();
-            context.arc(x, y, radius, 0, Math.PI * 2);
-            context.moveTo(x - radius * 1.45, y); context.lineTo(x - radius * .35, y);
-            context.moveTo(x + radius * .35, y); context.lineTo(x + radius * 1.45, y);
-            context.moveTo(x, y - radius * 1.45); context.lineTo(x, y - radius * .35);
-            context.moveTo(x, y + radius * .35); context.lineTo(x, y + radius * 1.45);
-            context.stroke();
-        });
-        context.restore();
+
+        const shortestImageDimension = Math.min(
+
+            imageCanvas.width,
+
+            imageCanvas.height
+
+        );
+
+
+
+        const radius = ValueLensColor.clamp(
+
+            shortestImageDimension * 0.018,
+
+            8,
+
+            30
+
+        );
+
+
+
+        const lineWidth = ValueLensColor.clamp(
+
+            shortestImageDimension * 0.002,
+
+            2,
+
+            5
+
+        );
+
+
+
+        canvasContext.save();
+
+
+
+        /*
+
+            Draw a dark outer crosshair first.
+
+        */
+
+
+
+        canvasContext.strokeStyle = "rgba(0, 0, 0, 0.9)";
+
+        canvasContext.lineWidth = lineWidth + 2;
+
+
+
+        drawCrosshairShape(x, y, radius);
+
+
+
+        /*
+
+            Draw a white inner crosshair on top. The contrasting
+
+            outlines make the mark visible over both dark and light
+
+            colors.
+
+        */
+
+
+
+        canvasContext.strokeStyle = "rgba(255, 255, 255, 0.95)";
+
+        canvasContext.lineWidth = lineWidth;
+
+
+
+        drawCrosshairShape(x, y, radius);
+
+
+
+        canvasContext.restore();
+
     }
+
+
+
+
+
+    /**
+
+     * Draw the actual crosshair path using the current stroke style.
+
+     *
+
+     * @param {number} x
+
+     * @param {number} y
+
+     * @param {number} radius
+
+     */
+
+    function drawCrosshairShape(x, y, radius) {
+
+        const centerGap = radius * 0.35;
+
+
+
+        canvasContext.beginPath();
+
+
+
+        canvasContext.arc(
+
+            x,
+
+            y,
+
+            radius,
+
+            0,
+
+            Math.PI * 2
+
+        );
+
+
+
+        canvasContext.moveTo(
+
+            x - radius * 1.45,
+
+            y
+
+        );
+
+
+
+        canvasContext.lineTo(
+
+            x - centerGap,
+
+            y
+
+        );
+
+
+
+        canvasContext.moveTo(
+
+            x + centerGap,
+
+            y
+
+        );
+
+
+
+        canvasContext.lineTo(
+
+            x + radius * 1.45,
+
+            y
+
+        );
+
+
+
+        canvasContext.moveTo(
+
+            x,
+
+            y - radius * 1.45
+
+        );
+
+
+
+        canvasContext.lineTo(
+
+            x,
+
+            y - centerGap
+
+        );
+
+
+
+        canvasContext.moveTo(
+
+            x,
+
+            y + centerGap
+
+        );
+
+
+
+        canvasContext.lineTo(
+
+            x,
+
+            y + radius * 1.45
+
+        );
+
+
+
+        canvasContext.stroke();
+
+    }
+
+
+
+
+
+    /*
+
+        --------------------------------------------------------
+
+        Fatal error display
+
+        --------------------------------------------------------
+
+    */
+
+
+
+
+
+    /**
+
+     * Replace the page body with a readable startup-error message.
+
+     *
+
+     * @param {string} message
+
+     */
+
+    function showFatalError(message) {
+
+        document.body.innerHTML = "";
+
+
+
+        const errorContainer = document.createElement("main");
+
+        errorContainer.style.maxWidth = "42rem";
+
+        errorContainer.style.margin = "3rem auto";
+
+        errorContainer.style.padding = "1.5rem";
+
+        errorContainer.style.fontFamily =
+
+            '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+
+
+
+        const heading = document.createElement("h1");
+
+        heading.textContent = "ValueLens could not start";
+
+
+
+        const paragraph = document.createElement("p");
+
+        paragraph.textContent = message;
+
+
+
+        const advice = document.createElement("p");
+
+        advice.textContent =
+
+            "Confirm that index.html, styles.css, color.js, and app.js " +
+
+            "are all in the same folder.";
+
+
+
+        errorContainer.append(
+
+            heading,
+
+            paragraph,
+
+            advice
+
+        );
+
+
+
+        document.body.appendChild(errorContainer);
+
+    }
+
+
+
 });
