@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.3.1 - 2026-07-22
+
+- Expanded Directed Value Massing undo history to ten operations.
+- Kept the button label as `Undo Last` without displaying a count.
+- Added an `Undo limit reached` message when no earlier operation is available.
+- Stored compact massing commands instead of ten full-resolution image copies.
+
+## 1.3.0 - 2026-07-22
+
+- Added Directed Value Massing with user-drawn free-form boundaries.
+- Added assignment of any retained Painter's Value to the drawn area.
+- Added a visible closed-boundary preview before applying a change.
+- Added cancellation and one-step undo.
+- Ensured edited value maps are used by PNG export.
+- Suspended pan and sampling gestures while drawing.
+- Added `js/massing.js` for value-mass editing logic.
+
 ## 1.2.3 - 2026-07-22
 
 - Corrected Fit Image so smaller images can be enlarged beyond 100% to fill the available workspace while remaining completely visible.

@@ -1,4 +1,4 @@
-# ValueLens 1.2.3
+# ValueLens 1.3.1
 
 ValueLens is a browser-based studio tool that samples a photograph, reports CIELAB color, estimates Painter's Value on a 1-10 scale, and creates simplified value maps.
 
@@ -35,6 +35,16 @@ The saved PNG does not contain the sampling crosshair or interface controls. The
 
 The presets include **Notan** (Values 1 and 10) plus three-, five-, and seven-value studies. On desktop, the controls and image workspace scroll independently so the reference remains in view while using controls farther down the page.
 
+## Directed Value Massing
+
+1. Generate a Painter's Value Map.
+2. In **Directed Value Massing**, choose the value that should fill the area.
+3. Select **Draw Area** and trace a free-form boundary directly over the map. Release to close it.
+4. Select **Apply Value** to normalize everything inside the boundary.
+5. Use **Undo Last** repeatedly for up to ten recent changes, or **Save PNG** to export the edited map.
+
+Pan and sampling are suspended while drawing so the gesture cannot move the image accidentally. **Cancel Drawing** restores normal navigation without changing the map. When no earlier operation remains available, ValueLens displays **Undo limit reached** and disables the Undo button.
+
 ## Structure
 
 ```text
@@ -46,6 +56,7 @@ ValueLens/
 |   |-- app.js
 |   |-- color.js
 |   |-- valueMap.js
+|   |-- massing.js
 |   |-- version.js
 |   `-- viewport.js
 `-- styles/
@@ -58,4 +69,4 @@ Painter's Value is an estimate derived from CIELAB L*. It is not a certified Mun
 
 ## Version
 
-The header and footer display the running version. Version 1.2.3 was built on 2026-07-22.
+The header and footer display the running version. Version 1.3.1 was built on 2026-07-22.

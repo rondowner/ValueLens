@@ -5,12 +5,12 @@ document.addEventListener("DOMContentLoaded", () => {
     const canvas = $("imageCanvas");
     const context = canvas.getContext("2d", { willReadFrequently: true });
     if (!window.ValueLensColor || !window.ValueLensValueMap ||
-        !window.ValueLensViewport || !context) {
+        !window.ValueLensMassing || !window.ValueLensViewport || !context) {
         document.body.textContent = "ValueLens could not start. Confirm that all project files are present.";
         return;
     }
 
-    const release = window.ValueLensVersion || { version: "1.2.3", buildDate: "2026-07-22" };
+    const release = window.ValueLensVersion || { version: "1.3.1", buildDate: "2026-07-22" };
     $("appVersion").textContent = `v${release.version}`;
     $("footerVersion").textContent = `v${release.version}`;
     $("buildDate").textContent = `Built ${release.buildDate}`;
@@ -22,6 +22,13 @@ document.addEventListener("DOMContentLoaded", () => {
     let retainedValues = [];
     let showingMap = false;
     let sourceName = "value-map";
+    let drawingMode = false;
+    let drawingPointer = null;
+    let lassoPoints = [];
+    let lassoComplete = false;
+    let baseMapData = null;
+    let massingHistory = [];
+    const MASSING_UNDO_LIMIT = 10;
 
     const viewport = ValueLensViewport({
         container: $("canvasContainer"),
@@ -47,9 +54,18 @@ document.addEventListener("DOMContentLoaded", () => {
     $("generateMap").onclick = generateMap;
     $("showOriginal").onclick = toggleOriginal;
     $("saveMap").onclick = saveMap;
+    $("drawArea").onclick = beginDrawing;
+    $("applyMassing").onclick = applyMassing;
+    $("cancelMassing").onclick = () => cancelDrawing("Drawing cancelled.");
+    $("undoMassing").onclick = undoMassing;
     document.querySelectorAll("[data-values]").forEach(button => {
         button.onclick = () => { $("mapValues").value = button.dataset.values; };
     });
+    const drawingSurface = $("canvasContainer");
+    drawingSurface.addEventListener("pointerdown", handleDrawingStart);
+    drawingSurface.addEventListener("pointermove", handleDrawingMove);
+    drawingSurface.addEventListener("pointerup", handleDrawingEnd);
+    drawingSurface.addEventListener("pointercancel", handleDrawingCancel);
 
     $("imageFile").addEventListener("change", event => {
         const file = event.target.files?.[0];
@@ -72,6 +88,7 @@ document.addEventListener("DOMContentLoaded", () => {
             showingMap = false;
             selectedPoint = measurement = null;
             sourceName = file.name.replace(/\.[^.]+$/, "") || "value-map";
+            resetMassing();
             $("fileName").textContent = `${file.name} — ${canvas.width} × ${canvas.height}`;
             $("imagePlaceholder").hidden = true;
             $("canvasContainer").hidden = false;
@@ -99,7 +116,8 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     function redraw() {
         drawBase();
-        if (selectedPoint) drawCrosshair(selectedPoint.x, selectedPoint.y);
+        if (drawingMode && lassoPoints.length) drawLasso();
+        else if (selectedPoint) drawCrosshair(selectedPoint.x, selectedPoint.y);
     }
 
     function generateMap() {
@@ -121,6 +139,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 $("showOriginal").disabled = false;
                 $("showOriginal").textContent = "Show Original";
                 $("saveMap").disabled = false;
+                prepareMassing(values);
                 renderLegend();
                 redraw();
                 updateMode();
@@ -135,6 +154,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function toggleOriginal() {
         if (!mapData) return;
+        if (drawingMode) cancelDrawing("Drawing cancelled when the view changed.");
         showingMap = !showingMap;
         $("showOriginal").textContent = showingMap ? "Show Original" : "Show Value Map";
         selectedPoint = measurement = null;
@@ -184,6 +204,220 @@ document.addEventListener("DOMContentLoaded", () => {
         $("mapStatus").className = `map-status${error ? " error" : ""}`;
     }
     function updateMode() { $("modeIndicator").textContent = showingMap ? "Painter's Value Map" : "Original"; }
+
+    function resetMassing() {
+        drawingMode = false;
+        drawingPointer = null;
+        lassoPoints = [];
+        lassoComplete = false;
+        baseMapData = null;
+        massingHistory = [];
+        viewport.setInteractionEnabled(true);
+        drawingSurface.classList.remove("drawing-area");
+        $("massingValue").disabled = true;
+        $("massingValue").innerHTML = "<option>Generate a value map first</option>";
+        $("drawArea").disabled = true;
+        $("applyMassing").disabled = true;
+        $("cancelMassing").disabled = true;
+        $("undoMassing").disabled = true;
+        setMassingStatus("Generate a value map to enable massing.");
+    }
+
+    function prepareMassing(values) {
+        if (drawingMode) cancelDrawing();
+        const select = $("massingValue");
+        select.textContent = "";
+        values.slice().reverse().forEach(value => {
+            const option = document.createElement("option");
+            option.value = value;
+            option.textContent = `Value ${value}`;
+            select.append(option);
+        });
+        select.disabled = false;
+        $("drawArea").disabled = false;
+        $("applyMassing").disabled = true;
+        $("cancelMassing").disabled = true;
+        baseMapData = mapData;
+        massingHistory = [];
+        $("undoMassing").disabled = true;
+        setMassingStatus("Choose a value, then draw a free-form boundary around the area to simplify.");
+    }
+
+    function beginDrawing() {
+        if (!mapData) return;
+        if (!showingMap) {
+            showingMap = true;
+            $("showOriginal").textContent = "Show Original";
+            updateMode();
+        }
+        drawingMode = true;
+        drawingPointer = null;
+        lassoPoints = [];
+        lassoComplete = false;
+        selectedPoint = measurement = null;
+        $("emptyResult").hidden = false;
+        $("measurementResult").hidden = true;
+        viewport.setInteractionEnabled(false);
+        drawingSurface.classList.add("drawing-area");
+        $("drawArea").disabled = true;
+        $("applyMassing").disabled = true;
+        $("cancelMassing").disabled = false;
+        setMassingStatus("Draw around the area. Release to close the boundary.");
+        redraw();
+    }
+
+    function handleDrawingStart(event) {
+        if (!drawingMode || drawingPointer !== null) return;
+        event.preventDefault();
+        drawingPointer = event.pointerId;
+        drawingSurface.setPointerCapture(event.pointerId);
+        const point = boundedImagePoint(event);
+        lassoPoints = point ? [point] : [];
+        lassoComplete = false;
+        redraw();
+    }
+
+    function handleDrawingMove(event) {
+        if (!drawingMode || event.pointerId !== drawingPointer || !lassoPoints.length) return;
+        event.preventDefault();
+        const point = boundedImagePoint(event);
+        if (!point) return;
+        const previous = lassoPoints[lassoPoints.length - 1];
+        const minimumSpacing = Math.max(1, 2 / viewport.getScale());
+        if (Math.hypot(point.x - previous.x, point.y - previous.y) >= minimumSpacing) {
+            lassoPoints.push(point);
+            redraw();
+        }
+    }
+
+    function handleDrawingEnd(event) {
+        if (!drawingMode || event.pointerId !== drawingPointer) return;
+        event.preventDefault();
+        drawingPointer = null;
+        if (lassoPoints.length < 3) {
+            lassoPoints = [];
+            setMassingStatus("The boundary was too small. Draw a larger enclosed area.", true);
+            redraw();
+            return;
+        }
+        lassoComplete = true;
+        $("applyMassing").disabled = false;
+        setMassingStatus("Boundary ready. Apply the selected value or cancel and redraw.");
+        redraw();
+    }
+
+    function handleDrawingCancel(event) {
+        if (drawingMode && event.pointerId === drawingPointer) {
+            drawingPointer = null;
+            lassoPoints = [];
+            lassoComplete = false;
+            $("applyMassing").disabled = true;
+            setMassingStatus("Drawing interrupted. Draw the boundary again.", true);
+            redraw();
+        }
+    }
+
+    function boundedImagePoint(event) {
+        const point = viewport.imagePoint(event.clientX, event.clientY);
+        if (point.x < 0 || point.y < 0 || point.x >= canvas.width || point.y >= canvas.height) return null;
+        return point;
+    }
+
+    function applyMassing() {
+        if (!mapData || !lassoComplete || lassoPoints.length < 3) return;
+        const targetValue = Number($("massingValue").value);
+        try {
+            const result = ValueLensMassing.applyPolygon(mapData, lassoPoints, targetValue);
+            mapData = result.imageData;
+            massingHistory.push({
+                points: lassoPoints.map(point => ({ x: point.x, y: point.y })),
+                value: targetValue
+            });
+            if (massingHistory.length > MASSING_UNDO_LIMIT) {
+                const committedOperation = massingHistory.shift();
+                baseMapData = ValueLensMassing.applyPolygon(
+                    baseMapData,
+                    committedOperation.points,
+                    committedOperation.value
+                ).imageData;
+            }
+            cancelDrawing();
+            $("undoMassing").disabled = false;
+            setMassingStatus(`Assigned Value ${targetValue} to the drawn area (${result.changed.toLocaleString()} image locations changed).`);
+            redraw();
+        } catch (error) {
+            setMassingStatus(error.message, true);
+        }
+    }
+
+    function undoMassing() {
+        if (!massingHistory.length || !baseMapData) {
+            $("undoMassing").disabled = true;
+            setMassingStatus("Undo limit reached. There are no earlier massing changes available.");
+            return;
+        }
+        massingHistory.pop();
+        rebuildMassingHistory();
+        if (massingHistory.length === 0) {
+            $("undoMassing").disabled = true;
+            setMassingStatus("Undo limit reached. There are no earlier massing changes available.");
+        } else {
+            $("undoMassing").disabled = false;
+            setMassingStatus("The last massing change was undone.");
+        }
+        redraw();
+    }
+
+    function rebuildMassingHistory() {
+        let rebuilt = baseMapData;
+        for (const operation of massingHistory) {
+            rebuilt = ValueLensMassing.applyPolygon(
+                rebuilt,
+                operation.points,
+                operation.value
+            ).imageData;
+        }
+        mapData = rebuilt;
+    }
+
+    function cancelDrawing(message = "") {
+        drawingMode = false;
+        drawingPointer = null;
+        lassoPoints = [];
+        lassoComplete = false;
+        viewport.setInteractionEnabled(true);
+        drawingSurface.classList.remove("drawing-area");
+        $("drawArea").disabled = !mapData;
+        $("applyMassing").disabled = true;
+        $("cancelMassing").disabled = true;
+        if (message) setMassingStatus(message);
+        redraw();
+    }
+
+    function setMassingStatus(message, error = false) {
+        $("massingStatus").textContent = message;
+        $("massingStatus").className = `massing-status${error ? " error" : ""}`;
+    }
+
+    function drawLasso() {
+        if (lassoPoints.length < 2) return;
+        context.save();
+        context.beginPath();
+        context.moveTo(lassoPoints[0].x, lassoPoints[0].y);
+        for (let index = 1; index < lassoPoints.length; index += 1) {
+            context.lineTo(lassoPoints[index].x, lassoPoints[index].y);
+        }
+        if (lassoComplete) context.closePath();
+        context.lineWidth = Math.max(1, 2 / viewport.getScale());
+        context.setLineDash([6 / viewport.getScale(), 4 / viewport.getScale()]);
+        context.strokeStyle = "#ff3b30";
+        context.stroke();
+        context.setLineDash([]);
+        context.lineWidth = Math.max(1, 1 / viewport.getScale());
+        context.strokeStyle = "white";
+        context.stroke();
+        context.restore();
+    }
 
     function averagePixels(centerX, centerY, requestedSize) {
         const half = Math.floor(requestedSize / 2);

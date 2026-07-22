@@ -101,5 +101,5 @@ window.ValueLensValueMap = (() => {
             .map(value => ({ value, gray: grayForPainterValue(value) }));
     }
 
-    return Object.freeze({ parseValues, generate, makeLegend });
+    return Object.freeze({ parseValues, generate, makeLegend, grayForPainterValue });
 })();
