@@ -1,4 +1,4 @@
-# ValueLens 1.2.0
+# ValueLens 1.2.3
 
 ValueLens is a browser-based studio tool that samples a photograph, reports CIELAB color, estimates Painter's Value on a 1-10 scale, and creates simplified value maps.
 
@@ -18,7 +18,7 @@ Open `index.html` in a modern browser or publish the project with GitHub Pages. 
 - Mouse wheel: zoom around the pointer.
 - Pinch: zoom around the midpoint of two touches.
 - Drag: pan with mouse, touch, or stylus.
-- **Fit Image**: fit and center the whole image.
+- **Fit Image**: fit and center the whole image, enlarging it beyond 100% when needed.
 - **100%**: show one image pixel at one CSS pixel.
 - **+ / -**: zoom around the viewport center.
 
@@ -32,6 +32,8 @@ A short tap or click samples the image. Dragging navigates without changing the 
 4. Select **Save PNG** to download a clean, full-resolution map.
 
 The saved PNG does not contain the sampling crosshair or interface controls. The on-screen legend identifies every gray by its Painter's Value number.
+
+The presets include **Notan** (Values 1 and 10) plus three-, five-, and seven-value studies. On desktop, the controls and image workspace scroll independently so the reference remains in view while using controls farther down the page.
 
 ## Structure
 
@@ -56,4 +58,4 @@ Painter's Value is an estimate derived from CIELAB L*. It is not a certified Mun
 
 ## Version
 
-The header and footer display the running version. Version 1.2.0 was built on 2026-07-21.
+The header and footer display the running version. Version 1.2.3 was built on 2026-07-22.

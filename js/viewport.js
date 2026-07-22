@@ -5,7 +5,7 @@ window.ValueLensViewport=function({container,stage,canvas,onTap,onChange}){
  function clampPan(){const{w,h}=size(),cw=canvas.width*scale,ch=canvas.height*scale,m=48;x=cw<=w?(w-cw)/2:Math.min(m,Math.max(w-cw-m,x));y=ch<=h?(h-ch)/2:Math.min(m,Math.max(h-ch-m,y));}
  function render(){clampPan();stage.style.width=`${canvas.width}px`;stage.style.height=`${canvas.height}px`;stage.style.transform=`translate(${x}px,${y}px) scale(${scale})`;onChange?.(scale);}
  function setScale(next,cx,cy){next=Math.min(MAX,Math.max(MIN,next));const r=container.getBoundingClientRect();cx??=r.left+r.width/2;cy??=r.top+r.height/2;const lx=cx-r.left,ly=cy-r.top,ix=(lx-x)/scale,iy=(ly-y)/scale;scale=next;x=lx-ix*scale;y=ly-iy*scale;render();}
- function fit(){const{w,h}=size();scale=Math.min(w/canvas.width,h/canvas.height,1);x=(w-canvas.width*scale)/2;y=(h-canvas.height*scale)/2;render();}
+ function fit(){const{w,h}=size();scale=Math.min(MAX,w/canvas.width,h/canvas.height);x=(w-canvas.width*scale)/2;y=(h-canvas.height*scale)/2;render();}
  function imagePoint(cx,cy){const r=container.getBoundingClientRect();return{x:Math.floor((cx-r.left-x)/scale),y:Math.floor((cy-r.top-y)/scale)};}
  container.addEventListener("wheel",e=>{e.preventDefault();setScale(scale*Math.exp(-e.deltaY*.0015),e.clientX,e.clientY);},{passive:false});
  container.addEventListener("pointerdown",e=>{e.preventDefault();container.setPointerCapture(e.pointerId);pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});start={x:e.clientX,y:e.clientY,panX:x,panY:y};moved=false;if(pointers.size===2){const p=[...pointers.values()];pinch={d:Math.hypot(p[1].x-p[0].x,p[1].y-p[0].y),scale};}container.classList.add("is-panning");});

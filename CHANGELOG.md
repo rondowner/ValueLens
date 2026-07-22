@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.2.3 - 2026-07-22
+
+- Corrected Fit Image so smaller images can be enlarged beyond 100% to fill the available workspace while remaining completely visible.
+
+## 1.2.2 - 2026-07-22
+
+- Simplified all value-map preset buttons to single-line labels.
+- Removed the redundant value lists beneath the preset names.
+
+## 1.2.1 - 2026-07-22
+
+- Added a Notan preset using Painter's Values 1 and 10.
+- Reformatted preset buttons with compact two-line labels.
+- Added independent vertical scrolling for the controls and image workspace on desktop.
+- Preserved natural page scrolling on narrow phone layouts.
+
 ## 1.2.0 - 2026-07-21
 
 - Added user-defined Painter's Value maps.

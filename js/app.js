@@ -10,7 +10,7 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
     }
 
-    const release = window.ValueLensVersion || { version: "1.2.0", buildDate: "2026-07-21" };
+    const release = window.ValueLensVersion || { version: "1.2.3", buildDate: "2026-07-22" };
     $("appVersion").textContent = `v${release.version}`;
     $("footerVersion").textContent = `v${release.version}`;
     $("buildDate").textContent = `Built ${release.buildDate}`;
